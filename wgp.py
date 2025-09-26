@@ -54,6 +54,30 @@ from tqdm import tqdm
 import requests
 from shared.gradio.gallery import AdvancedMediaGallery
 
+if not torch.cuda.is_available() or (torch.backends.mps.is_available() and torch.backends.mps.is_built()):
+    class MockDeviceProperties:
+        def __init__(self, total_memory):
+            self.total_memory = total_memory
+
+    def device_agnostic_get_device_properties(device=None):
+        # Mock properties for non-CUDA devices
+        if torch.backends.mps.is_available():
+            # Mock 16GB for MPS
+            return MockDeviceProperties(16 * 1024 * 1024 * 1024)
+        else:
+            # Mock 16GB for CPU
+            return MockDeviceProperties(16 * 1024 * 1024 * 1024)
+
+    def device_agnostic_get_device_capability(device=None):
+        return (0, 0)
+
+    def device_agnostic_is_available(device=None):
+        return False
+
+    torch.cuda.get_device_properties = device_agnostic_get_device_properties
+    torch.cuda.get_device_capability = device_agnostic_get_device_capability
+    torch.cuda.is_available = device_agnostic_is_available
+
 # import torch._dynamo as dynamo
 # dynamo.config.recompile_limit = 2000   # default is 256
 # dynamo.config.accumulated_recompile_limit = 2000  # or whatever limit you want
@@ -3563,6 +3587,25 @@ def get_resampled_video(video_in, start_frame, max_frames, target_fps, bridge='t
     
     from shared.utils.utils import resample
 
+    # Prioritize eva-decord for Apple Silicon
+    if processing_device == 'mps':
+        try:
+            import eva_decord
+            from eva_decord import VideoReader, cpu
+            vr = VideoReader(video_in, ctx=cpu(0))
+            fps = round(vr.get_avg_fps())
+
+            if max_frames < 0:
+                max_frames = max(len(vr) / fps * target_fps + max_frames, 0)
+
+            frame_nos = resample(fps, len(vr), max_target_frames_count=max_frames, target_fps=target_fps, start_target_frame=start_frame)
+            frames_list = vr.get_batch(frame_nos).asnumpy()
+            return torch.from_numpy(frames_list)
+        except (ImportError, Exception) as e:
+            print(f"eva-decord failed, falling back. Error: {e}")
+
+
+    # Fallback to decord or PyAV
     try:
         import decord
         decord.bridge.set_bridge(bridge)
@@ -3573,7 +3616,6 @@ def get_resampled_video(video_in, start_frame, max_frames, target_fps, bridge='t
 
         frame_nos = resample(fps, len(reader), max_target_frames_count= max_frames, target_fps=target_fps, start_target_frame= start_frame)
         frames_list = reader.get_batch(frame_nos)
-        # print(f"frame nos: {frame_nos}")
         return frames_list
     except (decord.DECORDError, ImportError) as e:
         print(f"decord failed to read video: {e}, falling back to PyAV")
@@ -3586,7 +3628,7 @@ def get_resampled_video(video_in, start_frame, max_frames, target_fps, bridge='t
 
         fps = round(float(meta["fps"][0]))
         duration_s = float(meta["duration"][0])
-        num_src_frames = int(round(duration_s * fps))  # robust length estimate
+        num_src_frames = int(round(duration_s * fps))
 
         if max_frames < 0:
             max_frames = max(int(num_src_frames / fps * target_fps + max_frames), 0)
