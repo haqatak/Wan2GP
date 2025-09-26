@@ -1,14 +1,38 @@
 import os
 os.environ["GRADIO_LANG"] = "en"
+import torch
+
+# Monkey-patch CUDA functions if not available or on MPS
+if not torch.cuda.is_available() or (torch.backends.mps.is_available() and torch.backends.mps.is_built()):
+    class MockDeviceProperties:
+        def __init__(self, total_memory):
+            self.total_memory = total_memory
+
+    def device_agnostic_get_device_properties(device=None):
+        if torch.backends.mps.is_available():
+            return MockDeviceProperties(16 * 1024 * 1024 * 1024)
+        else:
+            return MockDeviceProperties(16 * 1024 * 1024 * 1024)
+
+    def device_agnostic_get_device_capability(device=None):
+        return (0, 0)
+
+    def device_agnostic_is_available(device=None):
+        return False
+
+    torch.cuda.get_device_properties = device_agnostic_get_device_properties
+    torch.cuda.get_device_capability = device_agnostic_get_device_capability
+    torch.cuda.is_available = device_agnostic_is_available
+
 # # os.environ.pop("TORCH_LOGS", None)  # make sure no env var is suppressing/overriding
 # os.environ["TORCH_LOGS"]= "recompiles"
 import torch._logging as tlog
-# tlog.set_logs(recompiles=True, guards=True, graph_breaks=True)    
+# tlog.set_logs(recompiles=True, guards=True, graph_breaks=True)
 import time
 import sys
 import threading
 import argparse
-from mmgp import offload, safetensors2, profile_type 
+from mmgp import offload, safetensors2, profile_type
 try:
     import triton
 except ImportError:
@@ -29,11 +53,10 @@ from shared.utils.audio_video import extract_audio_tracks, combine_video_with_au
 from shared.utils.audio_video import save_image_metadata, read_image_metadata
 from shared.match_archi import match_nvidia_architecture
 from shared.attention import get_attention_modes, get_supported_attention_modes
-from huggingface_hub import hf_hub_download, snapshot_download    
-import torch
+from huggingface_hub import hf_hub_download, snapshot_download
 import gc
 import traceback
-import math 
+import math
 import typing
 import asyncio
 import inspect
@@ -53,30 +76,6 @@ from preprocessing.matanyone  import app as matanyone_app
 from tqdm import tqdm
 import requests
 from shared.gradio.gallery import AdvancedMediaGallery
-
-if not torch.cuda.is_available() or (torch.backends.mps.is_available() and torch.backends.mps.is_built()):
-    class MockDeviceProperties:
-        def __init__(self, total_memory):
-            self.total_memory = total_memory
-
-    def device_agnostic_get_device_properties(device=None):
-        # Mock properties for non-CUDA devices
-        if torch.backends.mps.is_available():
-            # Mock 16GB for MPS
-            return MockDeviceProperties(16 * 1024 * 1024 * 1024)
-        else:
-            # Mock 16GB for CPU
-            return MockDeviceProperties(16 * 1024 * 1024 * 1024)
-
-    def device_agnostic_get_device_capability(device=None):
-        return (0, 0)
-
-    def device_agnostic_is_available(device=None):
-        return False
-
-    torch.cuda.get_device_properties = device_agnostic_get_device_properties
-    torch.cuda.get_device_capability = device_agnostic_get_device_capability
-    torch.cuda.is_available = device_agnostic_is_available
 
 # import torch._dynamo as dynamo
 # dynamo.config.recompile_limit = 2000   # default is 256
