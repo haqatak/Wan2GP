@@ -217,7 +217,9 @@ class DetFace():
         self.inpSize = 416
         self.conf_thres = confThreshold
         self.iou_thres = nmsThreshold
-        self.test_device = torch.device(device if torch.cuda.is_available() else "cpu")
+        if device == "cuda" and not torch.cuda.is_available():
+            device = "cpu"
+        self.test_device = torch.device(device)
         self.model = torch.jit.load(pt_path).to(self.test_device)
         self.last_w = 416
         self.last_h = 416

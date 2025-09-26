@@ -302,7 +302,7 @@ class Generator(nn.Module):
 	def get_motion(self, img):
 		#motion_feat = self.enc.enc_motion(img)
 		# motion_feat = torch.utils.checkpoint.checkpoint((self.enc.enc_motion), img, use_reentrant=True)
-		with torch.cuda.amp.autocast(dtype=torch.float32):
+		with torch.amp.autocast(device_type=img.device.type, dtype=torch.float32):
 			motion_feat = self.enc.enc_motion(img)
 			motion = self.dec.direction(motion_feat)
 		return motion

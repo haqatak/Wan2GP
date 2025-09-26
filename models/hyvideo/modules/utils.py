@@ -15,7 +15,14 @@ from torch.nn.attention.flex_attention import (
 
 
 # @lru_cache
-def create_block_mask_cached(score_mod, B, H, M, N, device="cuda", _compile=False):
+def create_block_mask_cached(score_mod, B, H, M, N, device=None, _compile=False):
+    if device is None:
+        if torch.cuda.is_available():
+            device = "cuda"
+        elif torch.backends.mps.is_available():
+            device = "mps"
+        else:
+            device = "cpu"
     block_mask = create_block_mask(score_mod, B, H, M, N, device=device, _compile=_compile)
     return block_mask
 

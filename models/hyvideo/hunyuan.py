@@ -28,17 +28,17 @@ from transformers import AutoFeatureExtractor
 from .data_kits.face_align import AlignImage
 import librosa
 
-def get_audio_feature(feature_extractor, audio_path, duration):
+def get_audio_feature(feature_extractor, audio_path, duration, device):
     audio_input, sampling_rate = librosa.load(audio_path, duration=duration, sr=16000)
     assert sampling_rate == 16000
 
     audio_features = []
     window = 750*640
     for i in range(0, len(audio_input), window):
-        audio_feature = feature_extractor(audio_input[i:i+window], 
-                                        sampling_rate=sampling_rate, 
-                                        return_tensors="pt", 
-                                        device="cuda"
+        audio_feature = feature_extractor(audio_input[i:i+window],
+                                        sampling_rate=sampling_rate,
+                                        return_tensors="pt",
+                                        device=device
                                         ).input_features
         audio_features.append(audio_feature)
 
@@ -311,13 +311,11 @@ class Inference(object):
         self.wav2vec=wav2vec
         self.align_instance=align_instance
 
-        self.device = "cuda"
+        self.device = device
 
 
     @classmethod
-    def from_pretrained(cls, model_filepath, model_type, base_model_type, text_encoder_filepath,  dtype = torch.bfloat16, VAE_dtype = torch.float16, mixed_precision_transformer =torch.bfloat16 , quantizeTransformer = False, save_quantized = False, **kwargs):
-
-        device = "cuda" 
+    def from_pretrained(cls, model_filepath, model_type, base_model_type, text_encoder_filepath,  dtype = torch.bfloat16, VAE_dtype = torch.float16, mixed_precision_transformer =torch.bfloat16 , quantizeTransformer = False, save_quantized = False, device="cuda", **kwargs):
 
         import transformers
         # transformers.models.llava.modeling_llava.LlavaForConditionalGeneration.forward = patched_llava_forward # force legacy behaviour to be able to use tansformers v>(4.47)
@@ -491,7 +489,7 @@ class Inference(object):
             wav2vec._model_dtype = torch.float32
             wav2vec.requires_grad_(False)
         if avatar:
-            align_instance = AlignImage("cuda", det_path="ckpts/det_align/detface.pt")
+            align_instance = AlignImage(device, det_path="ckpts/det_align/detface.pt")
             align_instance.facedet.model.to("cpu")
             adapt_model(model, "audio_adapter_blocks")
         elif custom_audio:
@@ -780,7 +778,7 @@ class HunyuanVideoSampler(Inference):
             )
         from shared.utils.utils import seed_everything
         seed_everything(seed)
-        generator = [torch.Generator("cuda").manual_seed(seed) for seed in seeds]
+        generator = [torch.Generator(self.device).manual_seed(seed) for seed in seeds]
         # generator = [torch.Generator(self.device).manual_seed(seed) for seed in seeds]
 
         # ========================================================================
@@ -847,11 +845,11 @@ class HunyuanVideoSampler(Inference):
         if i2v_mode:
             semantic_images = convert_tensor_to_image(image_start)
             semantic_image_pixel_values = image_start.unsqueeze(0).unsqueeze(2).to(self.device)
-            with torch.autocast(device_type="cuda", dtype=torch.float16, enabled=True):
+            with torch.autocast(device_type=self.device, dtype=torch.float16, enabled=True):
                 img_latents = self.pipeline.vae.encode(semantic_image_pixel_values).latent_dist.mode() # B, C, F, H, W
                 img_latents.mul_(self.pipeline.vae.config.scaling_factor)
 
-            target_height, target_width = image_start.shape[1:] 
+            target_height, target_width = image_start.shape[1:]
 
         # ========================================================================
         # Build Rope freqs
@@ -861,7 +859,7 @@ class HunyuanVideoSampler(Inference):
             freqs_cos, freqs_sin = self.get_rotary_pos_embed(target_frame_num, target_height, target_width, enable_RIFLEx)
         else:
             if self.avatar:
-                concat_dict = {'mode': 'timecat', 'bias': -1} 
+                concat_dict = {'mode': 'timecat', 'bias': -1}
                 freqs_cos, freqs_sin = self.get_rotary_pos_embed_new(129, target_height, target_width, concat_dict)
             else:
                 if input_frames != None:
@@ -869,7 +867,7 @@ class HunyuanVideoSampler(Inference):
                 elif input_video != None:
                     target_height, target_width = input_video.shape[-2:]
 
-                concat_dict = {'mode': 'timecat-w', 'bias': -1} 
+                concat_dict = {'mode': 'timecat-w', 'bias': -1}
                 freqs_cos, freqs_sin = self.get_rotary_pos_embed_new(target_frame_num, target_height, target_width, concat_dict, enable_RIFLEx)
 
         n_tokens = freqs_cos.shape[0]
@@ -907,13 +905,13 @@ class HunyuanVideoSampler(Inference):
             pixel_value_video_mask, pixel_value_video_bg  = None, None
         if input_video != None or input_frames != None:
             if pixel_value_bg.shape[2] < frame_num:
-                padding_shape = list(pixel_value_bg.shape[0:2]) + [frame_num-pixel_value_bg.shape[2]] +  list(pixel_value_bg.shape[3:])  
+                padding_shape = list(pixel_value_bg.shape[0:2]) + [frame_num-pixel_value_bg.shape[2]] +  list(pixel_value_bg.shape[3:])
                 pixel_value_bg = torch.cat([pixel_value_bg, torch.full(padding_shape, -1, dtype=pixel_value_bg.dtype, device= pixel_value_bg.device ) ], dim=2)
                 # pixel_value_mask = torch.cat([ pixel_value_mask, torch.full(padding_shape, 255, dtype=pixel_value_mask.dtype, device= pixel_value_mask.device ) ], dim=2)
                 pixel_value_mask = torch.cat([ pixel_value_mask, torch.full(padding_shape, 1, dtype=pixel_value_mask.dtype, device= pixel_value_mask.device ) ], dim=2)
 
-            bg_latents = self.vae.encode(pixel_value_bg).latent_dist.sample()                
-            pixel_value_mask = pixel_value_mask.mul_(2).add_(-1.)    # unmasked pixels is -1 (no 0 as usual) and masked is 1 
+            bg_latents = self.vae.encode(pixel_value_bg).latent_dist.sample()
+            pixel_value_mask = pixel_value_mask.mul_(2).add_(-1.)    # unmasked pixels is -1 (no 0 as usual) and masked is 1
             mask_latents = self.vae.encode(pixel_value_mask).latent_dist.sample()
             bg_latents = torch.cat([bg_latents, mask_latents], dim=1)
             bg_latents.mul_(self.vae.config.scaling_factor)
@@ -925,8 +923,8 @@ class HunyuanVideoSampler(Inference):
             uncond_pixel_value_llava = pixel_value_llava.clone()
 
             pixel_value_ref = pixel_value_ref.unsqueeze(0)
-            self.align_instance.facedet.model.to("cuda")
-            face_masks = get_facemask(pixel_value_ref.to("cuda")*255, self.align_instance, area=3.0) 
+            self.align_instance.facedet.model.to(self.device)
+            face_masks = get_facemask(pixel_value_ref.to(self.device)*255, self.align_instance, area=3.0)
             # iii = (face_masks.squeeze(0).squeeze(0).permute(1,2,0).repeat(1,1,3)*255).cpu().numpy().astype(np.uint8)
             # image = Image.fromarray(iii)
             # image.save("mask.png")
@@ -936,11 +934,11 @@ class HunyuanVideoSampler(Inference):
             # pixel_value_ref = pixel_value_ref.clone().repeat(1,129,1,1,1)
 
             pixel_value_ref = pixel_value_ref.repeat(1,1+4*2,1,1,1)
-            pixel_value_ref = pixel_value_ref * 2 - 1 
+            pixel_value_ref = pixel_value_ref * 2 - 1
             pixel_value_ref_for_vae = rearrange(pixel_value_ref, "b f c h w -> b c f h w")
 
             vae_dtype = self.vae.dtype
-            with torch.autocast(device_type="cuda", dtype=vae_dtype, enabled=vae_dtype != torch.float32):
+            with torch.autocast(device_type=self.device, dtype=vae_dtype, enabled=vae_dtype != torch.float32):
                 ref_latents = self.vae.encode(pixel_value_ref_for_vae).latent_dist.sample()
                 ref_latents = torch.cat( [ref_latents[:,:, :1], ref_latents[:,:, 1:2].repeat(1,1,31,1,1),  ref_latents[:,:, -1:]], dim=2)
                 pixel_value_ref, pixel_value_ref_for_vae = None, None

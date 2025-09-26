@@ -1237,7 +1237,7 @@ class HunyuanVideoAudioPipeline(DiffusionPipeline):
                     t_expand = t.repeat(latent_model_input.shape[0])
                     guidance_expand = None
 
-                    with torch.autocast(device_type="cuda", dtype=target_dtype, enabled=autocast_enabled):                        
+                    with torch.autocast(device_type=device.type, dtype=target_dtype, enabled=autocast_enabled):
                         additional_kwargs = {
                             "pipeline": self,
                             "step_no": i,
@@ -1354,7 +1354,7 @@ class HunyuanVideoAudioPipeline(DiffusionPipeline):
             else:
                 latents = latents / self.vae.config.scaling_factor
 
-            with torch.autocast(device_type="cuda", dtype=vae_dtype, enabled=vae_autocast_enabled):
+            with torch.autocast(device_type=device.type, dtype=vae_dtype, enabled=vae_autocast_enabled):
                 image = self.vae.decode(latents, return_dict=False, generator=generator)[0]
             if image is None:
                 return (None, )

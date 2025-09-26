@@ -147,7 +147,13 @@ def get_cu_seqlens(text_mask, img_len):
     text_len = text_mask.sum(dim=1)
     max_len = text_mask.shape[1] + img_len
 
-    cu_seqlens = torch.zeros([2 * batch_size + 1], dtype=torch.int32, device="cuda")
+    if torch.cuda.is_available():
+        device = "cuda"
+    elif torch.backends.mps.is_available():
+        device = "mps"
+    else:
+        device = "cpu"
+    cu_seqlens = torch.zeros([2 * batch_size + 1], dtype=torch.int32, device=device)
 
     for i in range(batch_size):
         s = text_len[i] + img_len

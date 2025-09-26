@@ -990,7 +990,11 @@ class HunyuanVideoPipeline(DiffusionPipeline):
         else:
             batch_size = prompt_embeds.shape[0]
 
-        device = torch.device(f"cuda:{dist.get_rank()}") if dist.is_initialized() else self._execution_device
+        device = (
+            torch.device(f"{self.device.type}:{dist.get_rank()}")
+            if dist.is_initialized()
+            else self._execution_device
+        )
 
         # 3. Encode input prompt
         lora_scale = (
@@ -1263,7 +1267,7 @@ class HunyuanVideoPipeline(DiffusionPipeline):
  
                 # predict the noise residual
                 with torch.autocast(
-                    device_type="cuda", dtype=target_dtype, enabled=autocast_enabled
+                    device_type=self.device.type, dtype=target_dtype, enabled=autocast_enabled
                 ):
                     
                     if self.do_classifier_free_guidance and multi_passes_free_guidance:
@@ -1331,7 +1335,7 @@ class HunyuanVideoPipeline(DiffusionPipeline):
                 # perform guidance
                 if self.do_classifier_free_guidance:
                     if cfg_star_rescale:
-                        batch_size = 1 
+                        batch_size = 1
                         positive_flat = noise_pred_text.view(batch_size, -1)
                         negative_flat = noise_pred_uncond.view(batch_size, -1)
                         dot_product = torch.sum(
@@ -1340,7 +1344,7 @@ class HunyuanVideoPipeline(DiffusionPipeline):
                         squared_norm = torch.sum(negative_flat**2, dim=1, keepdim=True) + 1e-8
                         positive_flat, negative_flat = None, None
                         alpha = dot_product / squared_norm
-                        noise_pred_uncond *= alpha 
+                        noise_pred_uncond *= alpha
 
                     if ip_cfg_scale > 0:
                         noise_pred = noise_pred_uncond + self.guidance_scale * (noise_pred_text - noise_pred_uncond) + start_scale * (noise_pred_ip-noise_pred_text)
@@ -1373,7 +1377,7 @@ class HunyuanVideoPipeline(DiffusionPipeline):
                 noise_pred_uncond, noise_pred_text, noise_pred, noise_pred_ip, ret = None, None, None, None, None
 
                 if callback is not None:
-                    callback(i, latents.squeeze(0), False)         
+                    callback(i, latents.squeeze(0), False)
 
         if self.interrupt:
             return [None]
@@ -1412,7 +1416,7 @@ class HunyuanVideoPipeline(DiffusionPipeline):
                 latents = latents / self.vae.config.scaling_factor
 
             with torch.autocast(
-                device_type="cuda", dtype=vae_dtype, enabled=vae_autocast_enabled
+                device_type=self.device.type, dtype=vae_dtype, enabled=vae_autocast_enabled
             ):
                 if enable_tiling:
                     self.vae.enable_tiling()

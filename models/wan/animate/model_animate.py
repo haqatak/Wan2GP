@@ -6,7 +6,6 @@ from einops import  rearrange
 from typing import List
 import numpy as np
 import torch
-import torch.cuda.amp as amp
 import torch.nn as nn
 
 def after_patch_embedding(self, x: List[torch.Tensor], pose_latents, face_pixel_values):

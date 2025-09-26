@@ -23,6 +23,13 @@ os.environ["U2NET_HOME"] = os.path.join(os.getcwd(), "ckpts", "rembg")
 
 from PIL import Image
 video_info_cache = []
+def get_device():
+    if torch.cuda.is_available():
+        return "cuda"
+    elif torch.backends.mps.is_available() and torch.backends.mps.is_built():
+        return "mps"
+    return "cpu"
+
 def seed_everything(seed: int):
     random.seed(seed)
     np.random.seed(seed)

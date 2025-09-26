@@ -95,10 +95,12 @@ def release_model():
     if offloadobj is not None:
         offloadobj.release()
         offloadobj = None
-        torch.cuda.empty_cache()
+        if processing_device == 'cuda':
+            torch.cuda.empty_cache()
         gc.collect()
         try:
-            torch._C._host_emptyCache()
+            if processing_device == 'cuda':
+                torch._C._host_emptyCache()
         except:
             pass
         reload_needed = True
@@ -1750,17 +1752,33 @@ attention_modes_installed = get_attention_modes()
 attention_modes_supported = get_supported_attention_modes()
 args = _parse_args()
 
-gpu_major, gpu_minor = torch.cuda.get_device_capability(args.gpu if len(args.gpu) > 0 else None)
-if  gpu_major < 8:
-    print("Switching to FP16 models when possible as GPU architecture doesn't support optimed BF16 Kernels")
-    bfloat16_supported = False
+# Determine processing device
+if torch.backends.mps.is_available() and torch.backends.mps.is_built():
+    processing_device = "mps"
+elif torch.cuda.is_available():
+    processing_device = "cuda"
 else:
-    bfloat16_supported = True
+    processing_device = "cpu"
+
+# Allow user to override with --gpu flag if CUDA is available
+if args.gpu and torch.cuda.is_available():
+    processing_device = args.gpu
+
+print(f"Using device: {processing_device}")
+
+if processing_device == "cuda":
+    gpu_major, gpu_minor = torch.cuda.get_device_capability(args.gpu if len(args.gpu) > 0 else None)
+    if  gpu_major < 8:
+        print("Switching to FP16 models when possible as GPU architecture doesn't support optimed BF16 Kernels")
+        bfloat16_supported = False
+    else:
+        bfloat16_supported = True
+else:
+    # For MPS and CPU
+    bfloat16_supported = True # Apple Silicon supports bfloat16
+    gpu_major, gpu_minor = 0, 0 # Mock for non-cuda to avoid errors
 
 args.flow_reverse = True
-processing_device = args.gpu
-if len(processing_device) == 0:
-    processing_device ="cuda"
 # torch.backends.cuda.matmul.allow_fp16_accumulation = True
 lock_ui_attention = False
 lock_ui_transformer = False
@@ -3735,7 +3753,8 @@ def extract_faces_from_video_with_mask(input_video_path, input_mask_path, max_fr
 
     face_processor = None
     gc.collect()
-    torch.cuda.empty_cache()
+    if processing_device == 'cuda':
+        torch.cuda.empty_cache()
 
     face_tensor= torch.tensor(np.stack(face_list, dtype= np.float32) / 127.5 - 1).permute(-1, 0, 1, 2 ) # t h w c -> c t h w
     if pad_frames > 0:
@@ -3937,7 +3956,8 @@ def preprocess_video_with_mask(input_video_path, input_mask_path, height, width,
     preproc = None
     preproc_outside = None
     gc.collect()
-    torch.cuda.empty_cache()
+    if processing_device == 'cuda':
+        torch.cuda.empty_cache()
     if pad_frames > 0:
         masked_frames = masked_frames[0] * pad_frames + masked_frames
         if any_mask: masked_frames = masks[0] * pad_frames + masks
@@ -4100,10 +4120,12 @@ def set_seed(seed):
     import random
     seed = random.randint(0, 99999999) if seed == None or seed < 0 else seed
     torch.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)
+    if processing_device == 'cuda':
+        torch.cuda.manual_seed_all(seed)
     np.random.seed(seed)
     random.seed(seed)
-    torch.backends.cudnn.deterministic = True
+    if processing_device == 'cuda':
+        torch.backends.cudnn.deterministic = True
     return seed
 
 def edit_video(
@@ -4624,7 +4646,10 @@ def generate_video(
         slg_layers = None
 
     offload.shared_state["_attention"] =  attn
-    device_mem_capacity = torch.cuda.get_device_properties(0).total_memory / 1048576
+    if processing_device == 'cuda':
+        device_mem_capacity = torch.cuda.get_device_properties(0).total_memory / 1048576
+    else:
+        device_mem_capacity = 16 * 1024 # Mock 16GB for non-cuda
     if hasattr(wan_model.vae, "get_VAE_tile_size"):
         VAE_tile_size = wan_model.vae.get_VAE_tile_size(vae_config, device_mem_capacity, server_config.get("vae_precision", "16") == "32")
     else:
@@ -4675,9 +4700,14 @@ def generate_video(
 
     current_video_length = video_length
     # VAE Tiling
-    device_mem_capacity = torch.cuda.get_device_properties(None).total_memory / 1048576
+    if processing_device == 'cuda':
+        device_mem_capacity = torch.cuda.get_device_properties(None).total_memory / 1048576
+    elif processing_device == 'mps':
+        device_mem_capacity = torch.mps.driver_allocated_memory() / 1048576
+    else:
+        device_mem_capacity = 16 * 1024 # Mock 16GB for CPU
     guide_inpaint_color = model_def.get("guide_inpaint_color", 127.5)
-    extract_guide_from_window_start = model_def.get("extract_guide_from_window_start", False) 
+    extract_guide_from_window_start = model_def.get("extract_guide_from_window_start", False)
     hunyuan_custom = "hunyuan_video_custom" in model_filename
     hunyuan_custom_audio =  hunyuan_custom and "audio" in model_filename
     hunyuan_custom_edit =  hunyuan_custom and "edit" in model_filename
@@ -4689,13 +4719,13 @@ def generate_video(
         from models.wan.multitalk.multitalk import parse_speakers_locations
         speakers_bboxes, error = parse_speakers_locations(speakers_locations)
     else:
-        speakers_bboxes = None        
+        speakers_bboxes = None
     if "L" in image_prompt_type:
         if len(file_list)>0:
             video_source = file_list[-1]
         else:
             mp4_files = glob.glob(os.path.join(save_path, "*.mp4"))
-            video_source = max(mp4_files, key=os.path.getmtime) if mp4_files else None                            
+            video_source = max(mp4_files, key=os.path.getmtime) if mp4_files else None
 
     fps = get_computed_fps(force_fps, base_model_type , video_guide, video_source )
     control_audio_tracks = source_audio_tracks = source_audio_metadata = []
@@ -4714,13 +4744,13 @@ def generate_video(
         if video_source is not None:
             current_video_length +=  sliding_window_overlap - 1
         sliding_window = current_video_length > sliding_window_size
-        reuse_frames = min(sliding_window_size - 4, sliding_window_overlap) 
+        reuse_frames = min(sliding_window_size - 4, sliding_window_overlap)
     else:
         sliding_window = False
         sliding_window_size = current_video_length
         reuse_frames = 0
 
-    _, _, latent_size = get_model_min_frames_and_step(model_type)  
+    _, _, latent_size = get_model_min_frames_and_step(model_type)
     original_image_refs = image_refs
     image_refs = None if image_refs is None else [] + image_refs # work on a copy as it is going to be modified
     # image_refs = None
@@ -4730,7 +4760,7 @@ def generate_video(
     # Image Ref (non background and non positioned frames) are boxed in a white canvas in order to keep their own width/height ratio
     frames_to_inject = []
     any_background_ref  = 0
-    if "K" in video_prompt_type: 
+    if "K" in video_prompt_type:
         any_background_ref = 2 if model_def.get("all_image_refs_are_background_ref", False) else 1
 
     outpainting_dims = get_outpainting_dims(video_guide_outpainting)
@@ -4740,12 +4770,12 @@ def generate_video(
         fit_crop = False
         fit_canvas = 0
 
-    joint_pass = boost ==1 #and profile != 1 and profile != 3  
-    
-    skip_steps_cache = None if len(skip_steps_cache_type) == 0 else DynamicClass(cache_type = skip_steps_cache_type) 
+    joint_pass = boost ==1 #and profile != 1 and profile != 3
+
+    skip_steps_cache = None if len(skip_steps_cache_type) == 0 else DynamicClass(cache_type = skip_steps_cache_type)
 
     if skip_steps_cache != None:
-        skip_steps_cache.update({     
+        skip_steps_cache.update({
         "multiplier" : skip_steps_multiplier,
         "start_step":  int(skip_steps_start_step_perc*num_inference_steps/100)
         })
@@ -4780,13 +4810,13 @@ def generate_video(
             duration2 = librosa.get_duration(path=audio_guide2)
             if "C" in audio_prompt_type: duration += duration2
             else: duration = min(duration, duration2)
-            combination_type = "para" if "P" in audio_prompt_type else "add" 
+            combination_type = "para" if "P" in audio_prompt_type else "add"
             if clean_audio_files:
                 audio_guide = get_vocals(original_audio_guide, get_available_filename(save_path, audio_guide, "_clean", ".wav"))
                 audio_guide2 = get_vocals(original_audio_guide2, get_available_filename(save_path, audio_guide2, "_clean2", ".wav"))
                 temp_filenames_list += [audio_guide, audio_guide2]
         else:
-            if "X" in audio_prompt_type: 
+            if "X" in audio_prompt_type:
                 # dual speaker, voice separation
                 from preprocessing.speakers_separator import extract_dual_audio
                 combination_type = "para"
@@ -4794,7 +4824,7 @@ def generate_video(
                     audio_guide, audio_guide2  = "speaker1.wav", "speaker2.wav"
                 else:
                     audio_guide, audio_guide2  = get_available_filename(save_path, audio_guide, "_tmp1", ".wav"),  get_available_filename(save_path, audio_guide, "_tmp2", ".wav")
-                    temp_filenames_list +=   [audio_guide, audio_guide2]                  
+                    temp_filenames_list +=   [audio_guide, audio_guide2]
                 if clean_audio_files:
                     clean_audio_guide = get_vocals(original_audio_guide, get_available_filename(save_path, original_audio_guide, "_clean", ".wav"))
                     temp_filenames_list += [clean_audio_guide]
@@ -4815,10 +4845,10 @@ def generate_video(
             from models.wan.multitalk.multitalk import get_full_audio_embeddings
             # pad audio_proj_full if aligned to beginning of window to simulate source window overlap
             min_audio_duration =  current_video_length/fps if reset_control_aligment else video_source_duration + current_video_length/fps
-            audio_proj_full, output_new_audio_data = get_full_audio_embeddings(audio_guide1 = audio_guide, audio_guide2= audio_guide2, combination_type= combination_type , num_frames= max_source_video_frames, sr= audio_sampling_rate, fps =fps, padded_frames_for_embeddings = (reuse_frames if reset_control_aligment else 0), min_audio_duration = min_audio_duration) 
+            audio_proj_full, output_new_audio_data = get_full_audio_embeddings(audio_guide1 = audio_guide, audio_guide2= audio_guide2, combination_type= combination_type , num_frames= max_source_video_frames, sr= audio_sampling_rate, fps =fps, padded_frames_for_embeddings = (reuse_frames if reset_control_aligment else 0), min_audio_duration = min_audio_duration)
             if output_new_audio_data is not None: # not none if modified
                 if clean_audio_files: # need to rebuild the sum of audios with original audio
-                    _, output_new_audio_data = get_full_audio_embeddings(audio_guide1 = original_audio_guide, audio_guide2= original_audio_guide2, combination_type= combination_type , num_frames= max_source_video_frames, sr= audio_sampling_rate, fps =fps, padded_frames_for_embeddings = (reuse_frames if reset_control_aligment else 0), min_audio_duration = min_audio_duration, return_sum_only= True) 
+                    _, output_new_audio_data = get_full_audio_embeddings(audio_guide1 = original_audio_guide, audio_guide2= original_audio_guide2, combination_type= combination_type , num_frames= max_source_video_frames, sr= audio_sampling_rate, fps =fps, padded_frames_for_embeddings = (reuse_frames if reset_control_aligment else 0), min_audio_duration = min_audio_duration, return_sum_only= True)
                 output_new_audio_filepath=  None # need to build original speaker track if it changed size (due to padding at the end) or if it has been combined
 
     if hunyuan_custom_edit and video_guide != None:
@@ -4830,11 +4860,12 @@ def generate_video(
 
     seed = set_seed(seed)
 
-    torch.set_grad_enabled(False) 
+    torch.set_grad_enabled(False)
     os.makedirs(save_path, exist_ok=True)
     os.makedirs(image_save_path, exist_ok=True)
     gc.collect()
-    torch.cuda.empty_cache()
+    if processing_device == 'cuda':
+        torch.cuda.empty_cache()
     wan_model._interrupt = False
     abort = False
     if gen.get("abort", False):
@@ -5254,7 +5285,8 @@ def generate_video(
                 #     torch._dynamo.config.cache_size_limit = cache_size
 
                 gc.collect()
-                torch.cuda.empty_cache()
+                if processing_device == 'cuda':
+                    torch.cuda.empty_cache()
                 s = str(e)
                 keyword_list = {"CUDA out of memory" : "VRAM", "Tried to allocate":"VRAM", "CUDA error: out of memory": "RAM", "CUDA error: too many resources requested": "RAM"}
                 crash_type = ""
@@ -5628,8 +5660,9 @@ def process_tasks(state):
                 gen["progress_args"] = data
                 # progress(*data)
             elif cmd == "preview":
-                torch.cuda.current_stream().synchronize()
-                preview= None if data== None else generate_preview(params["model_type"], data) 
+                if processing_device == 'cuda':
+                    torch.cuda.current_stream().synchronize()
+                preview= None if data== None else generate_preview(params["model_type"], data)
                 gen["preview"] = preview
                 yield time.time() , gr.Text()
             else:
