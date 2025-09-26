@@ -45,7 +45,14 @@ class DepthAnnotator:
     def __init__(self, cfg, device=None):
         from .api import MiDaSInference
         pretrained_model = cfg['PRETRAINED_MODEL']
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu") if device is None else device
+        if device is None:
+            if torch.backends.mps.is_available() and torch.backends.mps.is_built():
+                device = "mps"
+            elif torch.cuda.is_available():
+                device = "cuda"
+            else:
+                device = "cpu"
+        self.device = device
         self.model = MiDaSInference(model_type='dpt_hybrid', model_path=pretrained_model).to(self.device)
         self.a = cfg.get('A', np.pi * 2.0)
         self.bg_th = cfg.get('BG_TH', 0.1)

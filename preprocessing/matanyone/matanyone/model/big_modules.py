@@ -330,7 +330,7 @@ class MaskDecoder(nn.Module):
             p4 = self.up_8_4(p8, f4)
             p2 = self.up_4_2(p4, f2)
             p1 = self.up_2_1(p2, f1)
-            with torch.amp.autocast("cuda"):
+            with torch.amp.autocast(device_type=memory_readout.device.type):
                 if seg_pass:
                     if last_mask is not None:
                         res = self.pred_seg(F.relu(p1.flatten(start_dim=0, end_dim=1).float()))

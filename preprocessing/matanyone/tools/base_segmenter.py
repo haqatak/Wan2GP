@@ -11,18 +11,25 @@ from .mask_painter import mask_painter
 
 
 class BaseSegmenter:
-    def __init__(self, SAM_checkpoint, model_type, device='cuda:0'):
+    def __init__(self, SAM_checkpoint, model_type, device=None):
         """
         device: model device
         SAM_checkpoint: path of SAM checkpoint
         model_type: vit_b, vit_l, vit_h
         """
+        if device is None:
+            if torch.backends.mps.is_available() and torch.backends.mps.is_built():
+                device = "mps"
+            elif torch.cuda.is_available():
+                device = "cuda"
+            else:
+                device = "cpu"
         print(f"Initializing BaseSegmenter to {device}")
         assert model_type in ['vit_b', 'vit_l', 'vit_h'], 'model_type must be vit_b, vit_l, or vit_h'
 
         self.device = device
         # SAM_checkpoint = None
-        self.torch_dtype = torch.float16 if 'cuda' in device else torch.float32
+        self.torch_dtype = torch.float16 if self.device != 'cpu' else torch.float32
         from accelerate import init_empty_weights
 
         # self.model = sam_model_registry[model_type](checkpoint=SAM_checkpoint)
@@ -70,7 +77,7 @@ class BaseSegmenter:
         assert self.embedded, 'prediction is called before set_image (feature embedding).'
         assert mode in ['point', 'mask', 'both'], 'mode must be point, mask, or both'
         
-        with torch.autocast(device_type='cuda', dtype=torch.float16):
+        with torch.autocast(device_type=self.device, dtype=self.torch_dtype):
             if mode == 'point':
                 masks, scores, logits = self.predictor.predict(point_coords=prompts['point_coords'], 
                                     point_labels=prompts['point_labels'], 

@@ -3563,18 +3563,56 @@ def get_resampled_video(video_in, start_frame, max_frames, target_fps, bridge='t
     
     from shared.utils.utils import resample
 
-    import decord
-    decord.bridge.set_bridge(bridge)
-    reader = decord.VideoReader(video_in)
-    fps = round(reader.get_avg_fps())
-    if max_frames < 0:
-        max_frames = max(len(reader)/ fps * target_fps + max_frames, 0)
+    try:
+        import decord
+        decord.bridge.set_bridge(bridge)
+        reader = decord.VideoReader(video_in)
+        fps = round(reader.get_avg_fps())
+        if max_frames < 0:
+            max_frames = max(len(reader)/ fps * target_fps + max_frames, 0)
 
+        frame_nos = resample(fps, len(reader), max_target_frames_count= max_frames, target_fps=target_fps, start_target_frame= start_frame)
+        frames_list = reader.get_batch(frame_nos)
+        # print(f"frame nos: {frame_nos}")
+        return frames_list
+    except (decord.DECORDError, ImportError) as e:
+        print(f"decord failed to read video: {e}, falling back to PyAV")
+        from torchvision.io import VideoReader
+        import torch
+        from shared.utils.utils import resample
 
-    frame_nos = resample(fps, len(reader), max_target_frames_count= max_frames, target_fps=target_fps, start_target_frame= start_frame)
-    frames_list = reader.get_batch(frame_nos)
-    # print(f"frame nos: {frame_nos}")
-    return frames_list
+        vr = VideoReader(video_in, "video")
+        meta = vr.get_metadata()["video"]
+
+        fps = round(float(meta["fps"][0]))
+        duration_s = float(meta["duration"][0])
+        num_src_frames = int(round(duration_s * fps))  # robust length estimate
+
+        if max_frames < 0:
+            max_frames = max(int(num_src_frames / fps * target_fps + max_frames), 0)
+
+        frame_nos = resample(
+            fps, num_src_frames,
+            max_target_frames_count=max_frames,
+            target_fps=target_fps,
+            start_target_frame=start_frame
+        )
+        if len(frame_nos) == 0:
+            return torch.empty((0,))
+
+        target_ts = [i / fps for i in frame_nos]
+        frames = []
+        vr.seek(target_ts[0])
+        idx = 0
+        tol = 0.5 / fps
+        for frame in vr:
+            t = float(frame["pts"])
+            if idx < len(target_ts) and t + tol >= target_ts[idx]:
+                frames.append(frame["data"].permute(1,2,0))
+                idx += 1
+                if idx >= len(target_ts):
+                    break
+        return frames
 
 # def get_resampled_video(video_in, start_frame, max_frames, target_fps):
 #     from torchvision.io import VideoReader

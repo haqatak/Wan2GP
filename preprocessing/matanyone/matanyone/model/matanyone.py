@@ -139,7 +139,7 @@ class MatAnyone(nn.Module,
         uncert_mask = uncert_output["mask"] if uncert_output is not None else None
 
         # read using visual attention
-        with torch.cuda.amp.autocast(enabled=False):
+        with torch.amp.autocast(device_type=query_key.device.type, enabled=False):
             affinity = get_affinity(memory_key.float(), memory_shrinkage.float(), query_key.float(),
                                     query_selection.float(), uncert_mask=uncert_mask)
 
