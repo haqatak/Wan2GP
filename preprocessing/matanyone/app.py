@@ -23,7 +23,12 @@ from .matanyone_wrapper import matanyone
 from shared.utils.audio_video import save_video, save_image
 from mmgp import offload
 
-arg_device = "cuda"
+if torch.backends.mps.is_available() and torch.backends.mps.is_built():
+    arg_device = "mps"
+elif torch.cuda.is_available():
+    arg_device = "cuda"
+else:
+    arg_device = "cpu"
 arg_sam_model_type="vit_h"
 arg_mask_save = False
 model_loaded = False
@@ -429,8 +434,9 @@ def image_matting(video_state, interactive_state, mask_dropdown, erode_kernel_si
     if len(np.unique(template_mask))==1:
         template_mask[0][0]=1
     select_matanyone()
-    foreground, alpha = matanyone(matanyone_processor, following_frames, template_mask*255, r_erode=erode_kernel_size, r_dilate=dilate_kernel_size, n_warmup=refine_iter)
-    torch.cuda.empty_cache()    
+    foreground, alpha = matanyone(matanyone_processor, following_frames, template_mask*255, r_erode=erode_kernel_size, r_dilate=dilate_kernel_size, n_warmup=refine_iter, device=arg_device)
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
 
 
     foreground_mat = False
