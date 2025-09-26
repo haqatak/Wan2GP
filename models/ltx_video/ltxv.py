@@ -7,7 +7,7 @@ from pathlib import Path
 from diffusers.utils import logging
 from typing import Optional, List, Union
 import yaml
-from shared.utils.utils import calculate_new_dimensions
+from shared.utils.utils import calculate_new_dimensions, get_device
 import imageio
 import json
 import numpy as np
@@ -50,6 +50,8 @@ def get_total_gpu_memory():
     if torch.cuda.is_available():
         total_memory = torch.cuda.get_device_properties(0).total_memory / (1024**3)
         return total_memory
+    elif torch.backends.mps.is_available():
+        return torch.mps.recommended_max_memory() / (1024**3)
     return 0
 
 
@@ -139,7 +141,7 @@ def seed_everething(seed: int):
     torch.manual_seed(seed)
     if torch.cuda.is_available():
         torch.cuda.manual_seed(seed)
-    if torch.backends.mps.is_available():
+    elif torch.backends.mps.is_available():
         torch.mps.manual_seed(seed)
 
 

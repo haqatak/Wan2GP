@@ -19,16 +19,17 @@ from torchvision.transforms import ToPILImage
 
 
 
-def get_audio_feature(feature_extractor, audio_path):
+def get_audio_feature(feature_extractor, audio_path, device):
     audio_input, sampling_rate = librosa.load(audio_path, sr=16000)
     assert sampling_rate == 16000
 
     audio_features = []
     window = 750*640
     for i in range(0, len(audio_input), window):
-        audio_feature = feature_extractor(audio_input[i:i+window], 
-                                        sampling_rate=sampling_rate, 
-                                        return_tensors="pt", 
+        audio_feature = feature_extractor(audio_input[i:i+window],
+                                        sampling_rate=sampling_rate,
+                                        return_tensors="pt",
+                                        device=device,
                                         ).input_features
         audio_features.append(audio_feature)
 
@@ -38,9 +39,10 @@ def get_audio_feature(feature_extractor, audio_path):
 
 class VideoAudioTextLoaderVal(Dataset):
     def __init__(
-        self, 
+        self,
         image_size: int,
-        meta_file: str, 
+        meta_file: str,
+        device="cuda",
         **kwargs,
     ):
         super().__init__()
@@ -50,29 +52,29 @@ class VideoAudioTextLoaderVal(Dataset):
         self.text_encoder_2 = kwargs.get("text_encoder_2", None)        # clipL_text_encoder
         self.feature_extractor = kwargs.get("feature_extractor", None)
         self.meta_files = []
-    
+
         csv_data = pd.read_csv(meta_file)
         for idx in range(len(csv_data)):
             self.meta_files.append(
                 {
                     "videoid": str(csv_data["videoid"][idx]),
-                    "image_path": str(csv_data["image"][idx]), 
-                    "audio_path": str(csv_data["audio"][idx]), 
-                    "prompt": str(csv_data["prompt"][idx]), 
+                    "image_path": str(csv_data["image"][idx]),
+                    "audio_path": str(csv_data["audio"][idx]),
+                    "prompt": str(csv_data["prompt"][idx]),
                     "fps": float(csv_data["fps"][idx])
                 }
             )
-        
+
         self.llava_transform = transforms.Compose(
             [
-                transforms.Resize((336, 336), interpolation=transforms.InterpolationMode.BILINEAR), 
-                transforms.ToTensor(), 
+                transforms.Resize((336, 336), interpolation=transforms.InterpolationMode.BILINEAR),
+                transforms.ToTensor(),
                 transforms.Normalize((0.48145466, 0.4578275, 0.4082107), (0.26862954, 0.26130258, 0.27577711)),
             ]
         )
         self.clip_image_processor = CLIPImageProcessor()
-        
-        self.device = torch.device("cuda")
+
+        self.device = torch.device(device)
         self.weight_dtype = torch.float16
 
         

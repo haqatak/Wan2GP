@@ -9,6 +9,7 @@ WanGP supports the Wan (and derived models), Hunyuan Video and LTV Video models 
 - Low VRAM requirements (as low as 6 GB of VRAM is sufficient for certain models)
 - Support for old GPUs (RTX 10XX, 20xx, ...)
 - Very Fast on the latest GPUs
+- **Support for Apple Silicon (M1, M2, M3) with MPS and MLX**
 - Easy to use Full Web based interface
 - Auto download of the required model adapted to your specific architecture
 - Tools integrated to facilitate Video Generation : Mask Editor, Prompt Enhancer, Temporal and Spatial Generation, MMAudio, Video Browser, Pose / Depth / Flow extractor
@@ -20,6 +21,14 @@ WanGP supports the Wan (and derived models), Hunyuan Video and LTV Video models 
 **Follow DeepBeepMeep on Twitter/X to get the Latest News**: https://x.com/deepbeepmeep
 
 ## 🔥 Latest Updates : 
+### September 26 2025: WanGP v8.75 - Apple Silicon Support!
+
+This release brings support for Apple Silicon devices, allowing users to run WanGP on their M1, M2, and M3 machines. This has been achieved through a comprehensive refactoring of the codebase to be device-agnostic, and the integration of new libraries optimized for Apple's hardware.
+
+- **Apple Silicon (MPS) Backend:** The application will now automatically detect and use the MPS backend when running on Apple Silicon, ensuring that the models can leverage the power of the Metal Performance Shaders framework.
+- **MLX and Flashy Attention:** We've integrated `mlx-flash-attention` to provide a significant performance boost for attention calculations on Apple Silicon.
+- **xDiT and eva-decord:** We've also added support for `xDiT` and `eva-decord` to further enhance performance and compatibility on Apple Silicon.
+
 ### September 25 2025: WanGP v8.73 - ~~Here Are Two Three New Contenders in the Vace Arena !~~ The Never Ending Release 
 
 So in ~~today's~~ this release you will find two Wannabe Vace that covers each only a subset of Vace features but offers some interesting advantages:
@@ -124,13 +133,23 @@ See full changelog: **[Changelog](docs/CHANGELOG.md)**
 
 **One-click installation:** Get started instantly with [Pinokio App](https://pinokio.computer/)
 
-**Manual installation:**
+**Manual installation (NVIDIA):**
 ```bash
 git clone https://github.com/deepbeepmeep/Wan2GP.git
 cd Wan2GP
 conda create -n wan2gp python=3.10.9
 conda activate wan2gp
 pip install torch==2.7.0 torchvision torchaudio --index-url https://download.pytorch.org/whl/test/cu128
+pip install -r requirements.txt
+```
+
+**Manual installation (Apple Silicon):**
+```bash
+git clone https://github.com/deepbeepmeep/Wan2GP.git
+cd Wan2GP
+conda create -n wan2gp python=3.10.9
+conda activate wan2gp
+pip install torch torchvision torchaudio
 pip install -r requirements.txt
 ```
 
@@ -191,4 +210,4 @@ https://www.youtube.com/watch?v=T5jNiEhf9xk
 
 <p align="center">
 Made with ❤️ by DeepBeepMeep
-</p> 
+</p>

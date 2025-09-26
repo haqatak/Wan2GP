@@ -4,7 +4,14 @@ import torch
 from .detface import DetFace
 
 class AlignImage(object):
-    def __init__(self, device='cuda', det_path=''):
+    def __init__(self, device=None, det_path=''):
+        if device is None:
+            if torch.cuda.is_available():
+                device = "cuda"
+            elif torch.backends.mps.is_available():
+                device = "mps"
+            else:
+                device = "cpu"
         self.facedet = DetFace(pt_path=det_path, confThreshold=0.5, nmsThreshold=0.45, device=device)
 
     @torch.no_grad()

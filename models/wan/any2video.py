@@ -67,7 +67,7 @@ class WanAny2V:
         checkpoint_dir,
         model_filename = None,
         submodel_no_list = None,
-        model_type = None, 
+        model_type = None,
         model_def = None,
         base_model_type = None,
         text_encoder_filename = None,
@@ -75,9 +75,10 @@ class WanAny2V:
         save_quantized = False,
         dtype = torch.bfloat16,
         VAE_dtype = torch.float32,
-        mixed_precision_transformer = False
+        mixed_precision_transformer = False,
+        device="cuda"
     ):
-        self.device = torch.device(f"cuda")
+        self.device = torch.device(device)
         self.config = config
         self.VAE_dtype = VAE_dtype
         self.dtype = dtype
@@ -274,7 +275,9 @@ class WanAny2V:
                     
         return torch.cat(ref_vae_latents, dim=1)
 
-    def get_i2v_mask(self, lat_h, lat_w, nb_frames_unchanged=0, mask_pixel_values=None, lat_t =0,  device="cuda"):
+    def get_i2v_mask(self, lat_h, lat_w, nb_frames_unchanged=0, mask_pixel_values=None, lat_t =0,  device=None):
+        if device is None:
+            device = self.device
         if mask_pixel_values is None:
             msk = torch.zeros(1, (lat_t-1) * 4 + 1, lat_h, lat_w, device=device)
         else:

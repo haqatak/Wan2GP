@@ -4,14 +4,35 @@ from importlib.metadata import version
 from mmgp import offload
 import torch.nn.functional as F
 import warnings
+import numpy as np
 
-major, minor = torch.cuda.get_device_capability(None)
-bfloat16_supported =  major >= 8 
+# Determine processing device
+if torch.backends.mps.is_available() and torch.backends.mps.is_built():
+    processing_device = "mps"
+elif torch.cuda.is_available():
+    processing_device = "cuda"
+else:
+    processing_device = "cpu"
+
+if torch.cuda.is_available():
+    major, minor = torch.cuda.get_device_capability(None)
+    bfloat16_supported =  major >= 8
+else:
+    major, minor = (0, 0)
+    bfloat16_supported = False
 
 try:
     from xformers.ops import memory_efficient_attention
 except ImportError:
     memory_efficient_attention = None
+
+try:
+    import mlx.core as mx
+    from mlx_flash_attention.attention import flash_attention
+    MLX_AVAILABLE = True
+except ImportError:
+    MLX_AVAILABLE = False
+    flash_attention = None
 
 try:
     import flash_attn_interface
@@ -115,10 +136,42 @@ def sageattn3_wrapper(
 #     sageattn2 = sageattn_qk_int8_pv_fp8_window_cuda
 
 @torch.compiler.disable()
+def mlx_flash_attention_wrapper(qkv_list, attention_length, attention_mask=None):
+    q, k, v = qkv_list
+
+    # MLX expects (batch, heads, seq_len, dims)
+    q = q.transpose(1, 2)
+    k = k.transpose(1, 2)
+    v = v.transpose(1, 2)
+
+    # Convert to numpy then to mlx
+    q_mx = mx.array(q.cpu().numpy())
+    k_mx = mx.array(k.cpu().numpy())
+    v_mx = mx.array(v.cpu().numpy())
+
+    mask_mx = None
+    if attention_mask is not None:
+        mask_mx = mx.array(attention_mask.cpu().numpy())
+
+    # flash_attention is causal by default in many implementations, here it is not.
+    output_mx = flash_attention(q_mx, k_mx, v_mx, mask=mask_mx, causal=False)
+
+    # Convert back to torch
+    output_torch = torch.from_numpy(np.array(output_mx)).to(q.device)
+
+    # Transpose back to (batch, seq_len, heads, dims)
+    output_torch = output_torch.transpose(1, 2)
+
+    del q, k, v, q_mx, k_mx, v_mx, mask_mx, output_mx
+    qkv_list.clear()
+
+    return output_torch
+
+@torch.compiler.disable()
 def sdpa_wrapper(
         qkv_list,
         attention_length,
-        attention_mask = None        
+        attention_mask = None
     ):
     q, k, v = qkv_list
 
@@ -136,6 +189,8 @@ def sdpa_wrapper(
 
 def get_attention_modes():
     ret = ["sdpa", "auto"]
+    if MLX_AVAILABLE:
+        ret.append("mlx_flash")
     if flash_attn != None:
         ret.append("flash")
     if memory_efficient_attention != None:
@@ -151,18 +206,24 @@ def get_attention_modes():
 
 def get_supported_attention_modes():
     ret = get_attention_modes()
-    major, minor = torch.cuda.get_device_capability()
-    if  major < 10:
-        if "sage3" in ret:
-            ret.remove("sage3")
+    if torch.cuda.is_available():
+        major, minor = torch.cuda.get_device_capability()
+        if  major < 10:
+            if "sage3" in ret:
+                ret.remove("sage3")
 
-    if not sage2_supported:
-        if "sage2" in ret:
-            ret.remove("sage2")
+        if not sage2_supported:
+            if "sage2" in ret:
+                ret.remove("sage2")
 
-    if  major < 7:
-        if "sage" in ret:
-            ret.remove("sage")
+        if  major < 7:
+            if "sage" in ret:
+                ret.remove("sage")
+    else:
+        # For non-CUDA devices, return a minimal set of supported modes
+        ret = ["sdpa", "auto"]
+        if MLX_AVAILABLE:
+            ret.append("mlx_flash")
 
     return ret
 
@@ -172,10 +233,10 @@ __all__ = [
 ]
 
 def get_cu_seqlens(batch_size, lens, max_len):
-    cu_seqlens = torch.zeros([2 * batch_size + 1], dtype=torch.int32, device="cuda")
+    cu_seqlens = torch.zeros([2 * batch_size + 1], dtype=torch.int32, device=processing_device)
 
     for i in range(batch_size):
-        s = lens[i] 
+        s = lens[i]
         s1 = i * max_len + s
         s2 = (i + 1) * max_len
         cu_seqlens[2 * i + 1] = s1
@@ -252,7 +313,7 @@ def pay_attention(
             k_chunks = [ u[:, :sz] for u, sz in zip(k_chunks, k_sizes)]
             v_chunks = [ u[:, :sz] for u, sz in zip(v_chunks, k_sizes)]
             o = []
-            for sub_q, sub_k, sub_v in zip(q_chunks, k_chunks, v_chunks): 
+            for sub_q, sub_k, sub_v in zip(q_chunks, k_chunks, v_chunks):
                 qkv_list = [sub_q, sub_k, sub_v]
                 sub_q, sub_k, sub_v = None, None, None
                 o.append( pay_attention(qkv_list) )
@@ -282,24 +343,28 @@ def pay_attention(
             k = k.reshape(-1, *k.shape[-2:])
             v = v.reshape(-1, *v.shape[-2:])
             q = q.reshape(-1, *q.shape[-2:])
-            cu_seqlens_q=get_cu_seqlens(b, q_lens, lq) 
-            cu_seqlens_k=get_cu_seqlens(b, k_lens, lk) 
+            cu_seqlens_q=get_cu_seqlens(b, q_lens, lq)
+            cu_seqlens_k=get_cu_seqlens(b, k_lens, lk)
         else:
             szq = q_lens[0].item() if q_lens != None else lq
             szk = k_lens[0].item() if k_lens != None else lk
             if szq != lq or szk != lk:
-                cu_seqlens_q = torch.tensor([0, szq, lq], dtype=torch.int32, device="cuda")
-                cu_seqlens_k = torch.tensor([0, szk, lk], dtype=torch.int32, device="cuda")
+                cu_seqlens_q = torch.tensor([0, szq, lq], dtype=torch.int32, device=processing_device)
+                cu_seqlens_k = torch.tensor([0, szk, lk], dtype=torch.int32, device=processing_device)
             else:
-                cu_seqlens_q = torch.tensor([0, lq], dtype=torch.int32, device="cuda")
-                cu_seqlens_k = torch.tensor([0, lk], dtype=torch.int32, device="cuda")
+                cu_seqlens_q = torch.tensor([0, lq], dtype=torch.int32, device=processing_device)
+                cu_seqlens_k = torch.tensor([0, lk], dtype=torch.int32, device=processing_device)
             q = q.squeeze(0)
             k = k.squeeze(0)
             v = v.squeeze(0)
 
 
     # apply attention
-    if attn=="sage":
+    if attn=="mlx_flash":
+        qkv_list = [q,k,v]
+        del q,k,v
+        x = mlx_flash_attention_wrapper(qkv_list, lq, attention_mask=attention_mask)
+    elif attn=="sage":
         x = sageattn_varlen_wrapper(
             q=q,
             k=k,
@@ -324,9 +389,9 @@ def pay_attention(
             x = sageattn2_wrapper(qkv_list, lq) #.unsqueeze(0)
         # else:
         #     layer =  offload.shared_state["layer"]
-        #     embed_sizes = offload.shared_state["embed_sizes"] 
-        #     current_step = offload.shared_state["step_no"] 
-        #     max_steps = offload.shared_state["max_steps"]  
+        #     embed_sizes = offload.shared_state["embed_sizes"]
+        #     current_step = offload.shared_state["step_no"]
+        #     max_steps = offload.shared_state["max_steps"]
 
 
         #     nb_latents =  embed_sizes[0] * embed_sizes[1]* embed_sizes[2]
@@ -335,7 +400,7 @@ def pay_attention(
         #     start_window_step = int(max_steps * 0.3)
         #     start_layer = 10
         #     end_layer = 30
-        #     if (layer < start_layer or layer > end_layer )  or current_step <start_window_step: 
+        #     if (layer < start_layer or layer > end_layer )  or current_step <start_window_step:
         #         window = 0
         #     else:
         #         # coef =  min((max_steps - current_step)/(max_steps-start_window_step),1)*max(min((25 - layer)/(25-start_layer),1),0) * 0.7 + 0.3
@@ -366,7 +431,7 @@ def pay_attention(
 
         #         q = flip(q)
         #         k = flip(k)
-        #         v = flip(v)            
+        #         v = flip(v)
         #     qkv_list = [q,k,v]
         #     del q,k,v
 
@@ -420,12 +485,12 @@ def pay_attention(
         if k_lens == None and q_lens == None:
             x = memory_efficient_attention(q, k, v )
         elif k_lens != None and q_lens == None:
-            attn_mask = BlockDiagonalPaddedKeysMask.from_seqlens([lq] * b , lk , list(k_lens) ) 
+            attn_mask = BlockDiagonalPaddedKeysMask.from_seqlens([lq] * b , lk , list(k_lens) )
             x = memory_efficient_attention(q, k, v, attn_bias= attn_mask )
         elif b == 1:
             szq = q_lens[0].item() if q_lens != None else lq
             szk = k_lens[0].item() if k_lens != None else lk
-            attn_mask = BlockDiagonalPaddedKeysMask.from_seqlens([szq, lq - szq ] , lk , [szk, 0] ) 
+            attn_mask = BlockDiagonalPaddedKeysMask.from_seqlens([szq, lq - szq ] , lk , [szk, 0] )
             x = memory_efficient_attention(q, k, v, attn_bias= attn_mask )
         else:
             assert False
@@ -434,4 +499,4 @@ def pay_attention(
         x = torch.cat([x, torch.empty( (x.shape[0], final_padding, *x.shape[-2:]), dtype= x.dtype, device=x.device  ) ], 1)
 
 
-    return x 
+    return x

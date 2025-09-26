@@ -716,7 +716,11 @@ def print_load_warning(missing: list[str], unexpected: list[str]) -> None:
         print(f"Got {len(unexpected)} unexpected keys:\n\t" + "\n\t".join(unexpected))
 
 
-def load_flow_model(name: str, model_filename, device: str | torch.device = "cuda", verbose: bool = True) -> Flux:
+from shared.utils.utils import get_device
+
+def load_flow_model(name: str, model_filename, device: str | torch.device = None, verbose: bool = True) -> Flux:
+    if device is None:
+        device = get_device()
     # Loading Flux
     config = configs[name]
 
@@ -750,16 +754,22 @@ def load_flow_model(name: str, model_filename, device: str | torch.device = "cud
     return model
 
 
-def load_t5(device: str | torch.device = "cuda", text_encoder_filename = None, max_length: int = 512) -> HFEmbedder:
+def load_t5(device: str | torch.device = None, text_encoder_filename = None, max_length: int = 512) -> HFEmbedder:
+    if device is None:
+        device = get_device()
     # max length 64, 128, 256 and 512 should work (if your sequence is short enough)
     return HFEmbedder("",text_encoder_filename, max_length=max_length, torch_dtype=torch.bfloat16).to(device)
 
 
-def load_clip(device: str | torch.device = "cuda") -> HFEmbedder:
+def load_clip(device: str | torch.device = None) -> HFEmbedder:
+    if device is None:
+        device = get_device()
     return HFEmbedder("ckpts/clip_vit_large_patch14", "", max_length=77, torch_dtype=torch.bfloat16, is_clip  =True).to(device)
 
 
-def load_ae(name: str, device: str | torch.device = "cuda") -> AutoEncoder:
+def load_ae(name: str, device: str | torch.device = None) -> AutoEncoder:
+    if device is None:
+        device = get_device()
     config = configs[name]
     ckpt_path = str(get_checkpoint_path(config.repo_id, config.repo_ae, "FLUX_AE"))
 

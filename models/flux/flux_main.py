@@ -70,7 +70,7 @@ class model_factory:
         self,
         checkpoint_dir,
         model_filename = None,
-        model_type = None, 
+        model_type = None,
         model_def = None,
         base_model_type = None,
         text_encoder_filename = None,
@@ -78,9 +78,10 @@ class model_factory:
         save_quantized = False,
         dtype = torch.bfloat16,
         VAE_dtype = torch.float32,
-        mixed_precision_transformer = False
+        mixed_precision_transformer = False,
+        device="cuda"
     ):
-        self.device = torch.device(f"cuda")
+        self.device = torch.device(device)
         self.VAE_dtype = VAE_dtype
         self.dtype = dtype
         torch_device = "cpu"
@@ -162,7 +163,7 @@ class model_factory:
                 return None
             if self.guidance_max_phases < 1: guide_scale = 1
             if n_prompt is None or len(n_prompt) == 0: n_prompt = "low quality, ugly, unfinished, out of focus, deformed, disfigure, blurry, smudged, restricted palette, flat colors"
-            device="cuda"
+            device=self.device
             flux_dev_uso = self.name in ['flux-dev-uso']
             flux_dev_umo = self.name in ['flux-dev-umo']
             latent_stiching =  self.name in ['flux-dev-uso', 'flux-dev-umo'] 

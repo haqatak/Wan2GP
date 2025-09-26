@@ -31,8 +31,12 @@ class TorchIGather:
             os.environ['WORLD_SIZE'] = str(world_size)
             os.environ['MASTER_ADDR'] = '127.0.0.1'
             os.environ['MASTER_PORT'] = str(29500)
-            torch.cuda.set_device(rank)
-            torch.distributed.init_process_group('nccl')
+            if torch.cuda.is_available():
+                torch.cuda.set_device(rank)
+                backend = 'nccl'
+            else:
+                backend = 'gloo'
+            torch.distributed.init_process_group(backend)
 
         self.handles = []
         self.buffers = []
@@ -658,7 +662,8 @@ class AutoencoderKLCausal3D(ModelMixin, ConfigMixin, FromOriginalVAEMixin):
         if self.parallel_decode:
 
             rank = mpi_rank()
-            torch.cuda.set_device(rank) # set device for trt_runner
+            if torch.cuda.is_available():
+                torch.cuda.set_device(rank) # set device for trt_runner
             world_size = mpi_world_size()
 
             tiles = []

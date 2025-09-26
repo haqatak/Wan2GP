@@ -136,6 +136,9 @@ def ref_hunyuan_sparse_head_placement(query, key, value, best_mask_idx, context_
 
 
 def test_hunyuan_sparse_head_placement():
+    if not torch.cuda.is_available():
+        print("CUDA not available, skipping test_hunyuan_sparse_head_placement")
+        return
 
     context_length = 226
     num_frame = 11
@@ -169,6 +172,9 @@ def test_hunyuan_sparse_head_placement():
 
 
 def benchmark_hunyuan_sparse_head_placement():
+    if not torch.cuda.is_available():
+        print("CUDA not available, skipping benchmark_hunyuan_sparse_head_placement")
+        return
     import time
 
     context_length = 226
@@ -308,6 +314,9 @@ def ref_hunyuan_hidden_states_placement(hidden_states, output_hidden_states, bes
     output_hidden_states[best_mask_idx == 1] = hunyuan_token_reorder_to_frame_major(hidden_states[best_mask_idx == 1].unsqueeze(0), context_length, num_frame * frame_size, num_frame, frame_size).squeeze(0)
 
 def test_hunyuan_hidden_states_placement():
+    if not torch.cuda.is_available():
+        print("CUDA not available, skipping test_hunyuan_hidden_states_placement")
+        return
 
     context_length = 226
     num_frame = 11
@@ -334,6 +343,9 @@ def test_hunyuan_hidden_states_placement():
     torch.testing.assert_close(hidden_states_out1, hidden_states_out2)
 
 def benchmark_hunyuan_hidden_states_placement():
+    if not torch.cuda.is_available():
+        print("CUDA not available, skipping benchmark_hunyuan_hidden_states_placement")
+        return
     import time
 
     context_length = 226
