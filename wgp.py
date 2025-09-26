@@ -1,8 +1,8 @@
 import os
 os.environ["GRADIO_LANG"] = "en"
-import torch
 
-# Monkey-patch CUDA functions if not available or on MPS
+# Monkey-patch CUDA functions BEFORE torch is imported by other libraries
+import torch
 if not torch.cuda.is_available() or (torch.backends.mps.is_available() and torch.backends.mps.is_built()):
     class MockDeviceProperties:
         def __init__(self, total_memory):
